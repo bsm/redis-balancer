@@ -3,6 +3,7 @@ package balancer
 import (
 	"errors"
 	"net"
+	"time"
 
 	"gopkg.in/redis.v2"
 )
@@ -19,7 +20,6 @@ const (
 )
 
 var (
-	ErrOptionsNil = errors.New("redis-balancer: options cannot be nil")
 	ErrNoBackends = errors.New("redis-balancer: no backends provided")
 )
 
@@ -30,11 +30,16 @@ type Client struct {
 }
 
 // New client initializes a new redis-client
-func NewClient(backends []Backend, mode BalanceMode, opt *redis.Options) (*Client, error) {
+func NewClient(backends []Backend, mode BalanceMode, opt *redis.Options) *Client {
 	if len(backends) < 1 {
-		return nil, ErrNoBackends
-	} else if opt == nil {
-		return nil, ErrOptionsNil
+		backends = []Backend{Backend{}}
+	}
+
+	if opt == nil {
+		opt = new(redis.Options)
+	}
+	if opt.DialTimeout < 1 {
+		opt.DialTimeout = 5 * time.Second
 	}
 
 	pool := newPool(backends, mode)
@@ -43,7 +48,7 @@ func NewClient(backends []Backend, mode BalanceMode, opt *redis.Options) (*Clien
 		return net.DialTimeout(network, address, opt.DialTimeout)
 	})
 
-	return &Client{*client, pool}, nil
+	return &Client{*client, pool}
 }
 
 // Close closes client and underlying pool

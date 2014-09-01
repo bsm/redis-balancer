@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	client, err := balancer.NewClient(
+	client := balancer.NewClient(
 		[]balancer.Backend{
 			balancer.Backend{Addr: "host-1:6379", CheckInterval: 600 * time.Millisecond},
 			balancer.Backend{Addr: "/tmp/redis.sock", Network: "unix"},
@@ -19,9 +19,6 @@ func main() {
 		balancer.ModeLeastConn,
 		&redis.Options{DialTimeout: time.Second},
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	res, err := client.Ping().Result()
 	if err != nil {

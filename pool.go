@@ -18,7 +18,9 @@ func newPool(backends []Backend, mode BalanceMode) *Pool {
 		mode:     mode,
 	}
 	for i, b := range backends {
-		pool.backends[i] = (&b).normalize()
+		backend := (&b).normalize()
+		pool.backends[i] = backend
+		backend.start()
 	}
 	return pool
 }
