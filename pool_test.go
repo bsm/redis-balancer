@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"math/rand"
 	"time"
 
 	. "github.com/onsi/ginkgo"
@@ -52,11 +53,17 @@ var _ = Describe("Pool", func() {
 		Expect(subject.backends[3].connections).To(Equal(uint64(18)))
 	})
 
-	It("should fallback on first when everythign down", func() {
+	It("should fallback on random when everything down", func() {
 		subject.backends[1].up = false
 		subject.backends[2].up = false
 		subject.backends[3].up = false
+
+		rand.Seed(100)
+		Expect(nextAddr()).To(Equal("host-4:6379"))
 		Expect(nextAddr()).To(Equal("host-1:6379"))
+		Expect(nextAddr()).To(Equal("host-1:6379"))
+		Expect(nextAddr()).To(Equal("host-1:6379"))
+		Expect(nextAddr()).To(Equal("host-3:6379"))
 	})
 
 })

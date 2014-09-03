@@ -2,6 +2,7 @@ package balancer
 
 import (
 	"math"
+	"math/rand"
 	"time"
 )
 
@@ -39,9 +40,9 @@ func (p *Pool) Next() (string, string) {
 		backend = p.nextByLatency()
 	}
 
-	// Select first backend if nothing's up
+	// Fall back on random backend
 	if backend == nil {
-		backend = p.backends[0]
+		backend = p.backends[rand.Intn(len(p.backends))]
 	}
 
 	// Increment the number of connections
