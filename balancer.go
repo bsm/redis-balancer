@@ -43,12 +43,12 @@ func NewClient(backends []Backend, mode BalanceMode, opt *redis.Options) *Client
 	}
 
 	pool := newPool(backends, mode)
-	client := redis.DialClient(opt, func() (net.Conn, error) {
+	opt.Dialer = func() (net.Conn, error) {
 		network, address := pool.Next()
 		return net.DialTimeout(network, address, opt.DialTimeout)
-	})
+	}
 
-	return &Client{*client, pool}
+	return &Client{*redis.NewClient(opt), pool}
 }
 
 // Close closes client and underlying pool
