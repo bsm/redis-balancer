@@ -1,13 +1,7 @@
 package balancer
 
-import (
-	"math"
-	"math/rand"
-	"time"
-)
-
 type Pool struct {
-	backends []*Backend
+	backends Backends
 	mode     BalanceMode
 }
 
@@ -15,7 +9,7 @@ type Pool struct {
 // Accepts a list of backend options
 func newPool(backends []Backend, mode BalanceMode) *Pool {
 	pool := &Pool{
-		backends: make([]*Backend, len(backends)),
+		backends: make(Backends, len(backends)),
 		mode:     mode,
 	}
 	for i, b := range backends {
@@ -33,16 +27,23 @@ func (p *Pool) Next() (string, string) {
 	// Select backend
 	switch p.mode {
 	case ModeLeastConn:
-		backend = p.nextLeastConn()
+		backend = p.backends.MinUp(func(b *Backend) int64 { return b.Connections() })
 	case ModeFirstUp:
-		backend = p.nextFirstUp()
-	case ModeLatency:
-		backend = p.nextByLatency()
+		backend = p.backends.FirstUp()
+	case ModeMinLatency:
+		backend = p.backends.MinUp(func(b *Backend) int64 { return int64(b.Latency()) })
+	case ModeRandom:
+		backend = p.backends.Up().Random()
+	case ModeWeightedLatency:
+		backend = p.backends.Up().WeightedRandom(func(b *Backend) int64 {
+			factor := int64(b.Latency())
+			return factor * factor
+		})
 	}
 
 	// Fall back on random backend
 	if backend == nil {
-		backend = p.backends[rand.Intn(len(p.backends))]
+		backend = p.backends.Random()
 	}
 
 	// Increment the number of connections
@@ -56,47 +57,4 @@ func (p *Pool) Close() error {
 		b.close()
 	}
 	return nil
-}
-
-func (p *Pool) nextFirstUp() *Backend {
-	for _, backend := range p.backends {
-		if backend.Up() {
-			return backend
-		}
-	}
-	return nil
-}
-
-func (p *Pool) nextByLatency() *Backend {
-	maxlcy := time.Duration(math.MaxInt64)
-	pos := -1
-	for n, backend := range p.backends {
-		if backend.Down() {
-			continue
-		} else if lcy := backend.Latency(); lcy < maxlcy {
-			pos, maxlcy = n, lcy
-		}
-	}
-
-	if pos < 0 {
-		return nil
-	}
-	return p.backends[pos]
-}
-
-func (p *Pool) nextLeastConn() *Backend {
-	numconn := uint64(math.MaxUint64)
-	pos := -1
-	for n, backend := range p.backends {
-		if backend.Down() {
-			continue
-		} else if num := backend.Connections(); num < numconn {
-			pos, numconn = n, num
-		}
-	}
-
-	if pos < 0 {
-		return nil
-	}
-	return p.backends[pos]
 }

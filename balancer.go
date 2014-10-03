@@ -15,8 +15,12 @@ const (
 	ModeLeastConn BalanceMode = iota
 	// FirstUp always picks the first available backend.
 	ModeFirstUp
-	// ModeLatency always picks the backend with the minimal latency.
-	ModeLatency
+	// ModeMinLatency always picks the backend with the minimal latency.
+	ModeMinLatency
+	// ModeRandom selects backends randomly.
+	ModeRandom
+	// ModeWeightedLatency uses latency as a weight for random selection.
+	ModeWeightedLatency
 )
 
 var (

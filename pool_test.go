@@ -16,6 +16,7 @@ var _ = Describe("Pool", func() {
 	}
 
 	BeforeEach(func() {
+		rand.Seed(100)
 		subject = &Pool{backends: []*Backend{
 			&Backend{Network: "tcp", Addr: "host-1:6379", up: false, connections: 0, latency: time.Millisecond},
 			&Backend{Network: "tcp", Addr: "host-2:6379", up: true, connections: 10, latency: 2 * time.Millisecond},
@@ -30,7 +31,7 @@ var _ = Describe("Pool", func() {
 		Expect(nextAddr()).To(Equal("host-2:6379"))
 		Expect(nextAddr()).To(Equal("host-2:6379"))
 		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(subject.backends[1].connections).To(Equal(uint64(14)))
+		Expect(subject.backends[1].connections).To(Equal(int64(14)))
 	})
 
 	It("should pick next backend (least-conn)", func() {
@@ -40,17 +41,37 @@ var _ = Describe("Pool", func() {
 		Expect(nextAddr()).To(Equal("host-2:6379"))
 		Expect(nextAddr()).To(Equal("host-3:6379"))
 		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(subject.backends[1].connections).To(Equal(uint64(12)))
-		Expect(subject.backends[2].connections).To(Equal(uint64(11)))
+		Expect(subject.backends[1].connections).To(Equal(int64(12)))
+		Expect(subject.backends[2].connections).To(Equal(int64(11)))
 	})
 
 	It("should pick next backend (min-latency)", func() {
-		subject.mode = ModeLatency
+		subject.mode = ModeMinLatency
 		Expect(nextAddr()).To(Equal("host-4:6379"))
 		Expect(nextAddr()).To(Equal("host-4:6379"))
 		Expect(nextAddr()).To(Equal("host-4:6379"))
 		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(subject.backends[3].connections).To(Equal(uint64(18)))
+		Expect(subject.backends[3].connections).To(Equal(int64(18)))
+	})
+
+	It("should pick next backend (randomly)", func() {
+		subject.mode = ModeRandom
+		Expect(nextAddr()).To(Equal("host-3:6379"))
+		Expect(nextAddr()).To(Equal("host-4:6379"))
+		Expect(nextAddr()).To(Equal("host-3:6379"))
+		Expect(nextAddr()).To(Equal("host-2:6379"))
+		Expect(subject.backends[3].connections).To(Equal(int64(15)))
+	})
+
+	It("should pick next backend (weighted-latency)", func() {
+		subject.mode = ModeWeightedLatency
+		Expect(nextAddr()).To(Equal("host-4:6379"))
+		Expect(nextAddr()).To(Equal("host-4:6379"))
+		Expect(nextAddr()).To(Equal("host-2:6379"))
+		Expect(nextAddr()).To(Equal("host-2:6379"))
+		Expect(nextAddr()).To(Equal("host-4:6379"))
+		Expect(subject.backends[1].connections).To(Equal(int64(12)))
+		Expect(subject.backends[3].connections).To(Equal(int64(17)))
 	})
 
 	It("should fallback on random when everything down", func() {
@@ -58,7 +79,6 @@ var _ = Describe("Pool", func() {
 		subject.backends[2].up = false
 		subject.backends[3].up = false
 
-		rand.Seed(100)
 		Expect(nextAddr()).To(Equal("host-4:6379"))
 		Expect(nextAddr()).To(Equal("host-1:6379"))
 		Expect(nextAddr()).To(Equal("host-1:6379"))

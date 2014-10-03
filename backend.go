@@ -23,7 +23,7 @@ type Backend struct {
 	CheckInterval time.Duration
 
 	up          bool
-	connections uint64
+	connections int64
 	latency     time.Duration
 
 	closer tomb.Tomb
@@ -43,7 +43,7 @@ func (b *Backend) Down() bool {
 }
 
 // Connections returns the number of connections
-func (b *Backend) Connections() uint64 {
+func (b *Backend) Connections() int64 {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 	return b.connections
@@ -97,11 +97,11 @@ func (b *Backend) poll() {
 		return
 	}
 
-	cnum, _ := strconv.ParseUint(cres[1], 10, 64)
+	cnum, _ := strconv.ParseInt(cres[1], 10, 64)
 	b.set(true, cnum, latency)
 }
 
-func (b *Backend) set(up bool, conns uint64, latency time.Duration) {
+func (b *Backend) set(up bool, conns int64, latency time.Duration) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
