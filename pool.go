@@ -1,60 +1,102 @@
 package balancer
 
-type Pool struct {
-	backends Backends
-	mode     BalanceMode
+import (
+	"math"
+	"math/rand"
+)
+
+type pool []*redisBackend
+
+// Up returns all backends that are up
+func (p pool) Up() pool {
+	return p.all(func(b *redisBackend) bool { return b.Up() })
 }
 
-// NewPool creates a new backend pool
-// Accepts a list of backend options
-func newPool(backends []Backend, mode BalanceMode) *Pool {
-	pool := &Pool{
-		backends: make(Backends, len(backends)),
-		mode:     mode,
-	}
-	for i, b := range backends {
-		backend := (&b).normalize()
-		pool.backends[i] = backend
-		backend.start()
-	}
-	return pool
+// FirstUp returns the first backend that is up
+func (p pool) FirstUp() *redisBackend {
+	return p.first(func(b *redisBackend) bool { return b.Up() })
 }
 
-// Next returns the next best backend network/address
-func (p *Pool) Next() (string, string) {
-	var backend *Backend
-
-	// Select backend
-	switch p.mode {
-	case ModeLeastConn:
-		backend = p.backends.MinUp(func(b *Backend) int64 { return b.Connections() })
-	case ModeFirstUp:
-		backend = p.backends.FirstUp()
-	case ModeMinLatency:
-		backend = p.backends.MinUp(func(b *Backend) int64 { return int64(b.Latency()) })
-	case ModeRandom:
-		backend = p.backends.Up().Random()
-	case ModeWeightedLatency:
-		backend = p.backends.Up().WeightedRandom(func(b *Backend) int64 {
-			factor := int64(b.Latency())
-			return factor * factor
-		})
+// MinUp returns the backend with the minumum result that is up
+func (p pool) MinUp(minimum func(*redisBackend) int64) *redisBackend {
+	min := int64(math.MaxInt64)
+	pos := -1
+	for n, b := range p {
+		if b.Up() {
+			if num := minimum(b); num < min {
+				pos, min = n, num
+			}
+		}
 	}
 
-	// Fall back on random backend
-	if backend == nil {
-		backend = p.backends.Random()
+	if pos < 0 {
+		return nil
 	}
-
-	// Increment the number of connections
-	backend.inc()
-	return backend.Network, backend.Addr
+	return p[pos]
 }
 
-// Close closes the pool
-func (p *Pool) Close() error {
-	for _, b := range p.backends {
-		b.close()
+// Random returns a random backend
+func (p pool) Random() *redisBackend {
+	if size := len(p); size > 0 {
+		return p[rand.Intn(size)]
+	}
+	return nil
+}
+
+// WeightedRandom returns a weighted-random backend
+func (p pool) WeightedRandom(weight func(*redisBackend) int64) *redisBackend {
+	if len(p) < 1 {
+		return nil
+	}
+
+	var min, max int64 = math.MaxInt64, 0
+	weights := make([]int64, len(p))
+	for n, b := range p {
+		w := weight(b)
+		if w > max {
+			max = w
+		}
+		if w < min {
+			min = w
+		}
+		weights[n] = w
+	}
+
+	var sum int64
+	for n, w := range weights {
+		w = min + max - w
+		sum = sum + w
+		weights[n] = w
+	}
+
+	mark := rand.Int63n(sum)
+	for n, w := range weights {
+		if mark -= w; mark <= 0 {
+			return p[n]
+		}
+	}
+
+	// We should never reach this point if the slice wasn't empty
+	return nil
+}
+
+// selects all backends given a criteria
+func (p pool) all(criteria func(*redisBackend) bool) pool {
+	res := make(pool, 0, len(p))
+	for _, b := range p {
+		if criteria(b) {
+			res = append(res, b)
+		}
+	}
+	return res
+}
+
+// returns the first matching backend given a criteria, or nil when nothing matches
+func (p pool) first(criteria func(*redisBackend) bool) *redisBackend {
+	for _, b := range p {
+		if criteria(b) {
+			return b
+		}
 	}
 	return nil
 }

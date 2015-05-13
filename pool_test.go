@@ -8,82 +8,62 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Pool", func() {
-	var subject *Pool
-	var nextAddr = func() string {
-		_, addr := subject.Next()
-		return addr
+var _ = Describe("pool", func() {
+	var subject pool
+
+	var addrsOf = func(p pool) []string {
+		addrs := make([]string, len(p))
+		for i, b := range p {
+			addrs[i] = b.opt.Addr
+		}
+		return addrs
 	}
 
 	BeforeEach(func() {
 		rand.Seed(100)
-		subject = &Pool{backends: []*Backend{
-			&Backend{Network: "tcp", Addr: "host-1:6379", up: false, connections: 0, latency: time.Millisecond},
-			&Backend{Network: "tcp", Addr: "host-2:6379", up: true, connections: 10, latency: 2 * time.Millisecond},
-			&Backend{Network: "tcp", Addr: "host-3:6379", up: true, connections: 8, latency: 3 * time.Millisecond},
-			&Backend{Network: "tcp", Addr: "host-4:6379", up: true, connections: 14, latency: 1 * time.Millisecond},
-		}, mode: ModeFirstUp}
+		subject = pool{
+			&redisBackend{opt: mockOpts("host-1:6379"), up: 0, connections: 4, latency: int64(time.Millisecond)},
+			&redisBackend{opt: mockOpts("host-2:6379"), up: 1, connections: 12, latency: int64(2 * time.Millisecond)},
+			&redisBackend{opt: mockOpts("host-3:6379"), up: 1, connections: 8, latency: int64(3 * time.Millisecond)},
+			&redisBackend{opt: mockOpts("host-4:6379"), up: 1, connections: 16, latency: int64(1 * time.Millisecond)},
+		}
 	})
 
-	It("should pick next backend (first-up)", func() {
-		subject.mode = ModeFirstUp
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(subject.backends[1].connections).To(Equal(int64(14)))
+	It("should select up", func() {
+		Expect(addrsOf(subject.Up())).To(Equal([]string{
+			"host-2:6379",
+			"host-3:6379",
+			"host-4:6379",
+		}))
 	})
 
-	It("should pick next backend (least-conn)", func() {
-		subject.mode = ModeLeastConn
-		Expect(nextAddr()).To(Equal("host-3:6379"))
-		Expect(nextAddr()).To(Equal("host-3:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-3:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(subject.backends[1].connections).To(Equal(int64(12)))
-		Expect(subject.backends[2].connections).To(Equal(int64(11)))
+	It("should select first up", func() {
+		Expect(pool{}.FirstUp()).To(BeNil())
+		Expect(subject.FirstUp().opt.Addr).To(Equal("host-2:6379"))
 	})
 
-	It("should pick next backend (min-latency)", func() {
-		subject.mode = ModeMinLatency
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(subject.backends[3].connections).To(Equal(int64(18)))
+	It("should select min up", func() {
+		Expect(pool{}.MinUp(func(b *redisBackend) int64 { return 100 })).To(BeNil())
+		Expect(subject.MinUp(func(b *redisBackend) int64 { return b.Connections() }).opt.Addr).To(Equal("host-3:6379"))
+		Expect(subject.MinUp(func(b *redisBackend) int64 { return int64(b.Latency()) }).opt.Addr).To(Equal("host-4:6379"))
 	})
 
-	It("should pick next backend (randomly)", func() {
-		subject.mode = ModeRandom
-		Expect(nextAddr()).To(Equal("host-3:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-3:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(subject.backends[3].connections).To(Equal(int64(15)))
+	It("should select random", func() {
+		res := make(map[string]int)
+		for i := 0; i < 1000; i++ {
+			res[subject.Random().opt.Addr]++
+		}
+		Expect(res).To(Equal(map[string]int{"host-1:6379": 259, "host-2:6379": 241, "host-3:6379": 265, "host-4:6379": 235}))
 	})
 
-	It("should pick next backend (weighted-latency)", func() {
-		subject.mode = ModeWeightedLatency
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-2:6379"))
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(subject.backends[1].connections).To(Equal(int64(12)))
-		Expect(subject.backends[3].connections).To(Equal(int64(17)))
-	})
+	It("should select weighted-random", func() {
+		Expect(pool{}.WeightedRandom(func(b *redisBackend) int64 { return 100 })).To(BeNil())
 
-	It("should fallback on random when everything down", func() {
-		subject.backends[1].up = false
-		subject.backends[2].up = false
-		subject.backends[3].up = false
-
-		Expect(nextAddr()).To(Equal("host-4:6379"))
-		Expect(nextAddr()).To(Equal("host-1:6379"))
-		Expect(nextAddr()).To(Equal("host-1:6379"))
-		Expect(nextAddr()).To(Equal("host-1:6379"))
-		Expect(nextAddr()).To(Equal("host-3:6379"))
+		res := make(map[string]int)
+		for i := 0; i < 1000; i++ {
+			res[subject.WeightedRandom(func(b *redisBackend) int64 { return b.Connections() }).opt.Addr]++
+		}
+		Expect(res).To(Equal(map[string]int{"host-1:6379": 418, "host-2:6379": 204, "host-3:6379": 302, "host-4:6379": 76}))
 	})
 
 })

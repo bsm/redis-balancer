@@ -3,7 +3,7 @@ package balancer
 import (
 	"regexp"
 	"strconv"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/redis.v2"
@@ -12,129 +12,107 @@ import (
 
 var pattern = regexp.MustCompile(`connected_clients:(\d+)`)
 
-type Backend struct {
-	// TCP bind address or unix socket path, defaults to 127.0.0.1:6379
-	Addr string
+// Redis backend
+type redisBackend struct {
+	client *redis.Client
+	opt    *Options
 
-	// Network type, either "tcp" or "unix", defaults to TCP
-	Network string
-
-	// Check interval, min 100ms, defaults to 1s
-	CheckInterval time.Duration
-
-	up          bool
-	connections int64
-	latency     time.Duration
+	up, successes, failures int32
+	connections, latency    int64
 
 	closer tomb.Tomb
-	mutex  sync.Mutex
+}
+
+func newRedisBackend(opt *Options) *redisBackend {
+	backend := &redisBackend{
+		client: redis.NewClient(&opt.Options),
+		opt:    opt,
+		up:     1,
+
+		connections: 1e6,
+		latency:     int64(time.Minute),
+	}
+	backend.startLoop()
+	return backend
 }
 
 // Up returns true if up
-func (b *Backend) Up() bool {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.up
-}
+func (b *redisBackend) Up() bool { return atomic.LoadInt32(&b.up) > 0 }
 
 // Down returns true if down
-func (b *Backend) Down() bool {
-	return !b.Up()
-}
+func (b *redisBackend) Down() bool { return !b.Up() }
 
 // Connections returns the number of connections
-func (b *Backend) Connections() int64 {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.connections
-}
+func (b *redisBackend) Connections() int64 { return atomic.LoadInt64(&b.connections) }
 
 // Latency returns the current latency
-func (b *Backend) Latency() time.Duration {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-	return b.latency
+func (b *redisBackend) Latency() time.Duration { return time.Duration(atomic.LoadInt64(&b.latency)) }
+
+// Close shuts down the backend
+func (b *redisBackend) Close() error {
+	b.closer.Kill(nil)
+	return b.closer.Wait()
 }
 
-func (b *Backend) normalize() *Backend {
-	clone := new(Backend)
-	*clone = *b
-
-	if clone.Addr == "" {
-		clone.Addr = "127.0.0.1:6379"
-	}
-	if clone.Network != "unix" {
-		clone.Network = "tcp"
-	}
-	if clone.CheckInterval < 100*time.Millisecond {
-		clone.CheckInterval = time.Second
-	}
-	return clone
-}
-
-func (b *Backend) newClient() *redis.Client {
-	if b.Network == "unix" {
-		return redis.NewUnixClient(&redis.Options{Addr: b.Addr})
-	}
-	return redis.NewTCPClient(&redis.Options{Addr: b.Addr})
-}
-
-func (b *Backend) poll() {
-	client := b.newClient()
-	defer client.Close()
-
+func (b *redisBackend) ping() {
 	start := time.Now()
-	info, err := client.Info().Result()
-	latency := time.Now().Sub(start)
+	info, err := b.client.Info().Result()
 	if err != nil {
-		b.set(false, 0, latency)
+		b.updateStatus(false)
 		return
 	}
+	atomic.StoreInt64(&b.latency, int64(time.Now().Sub(start)))
 
-	cres := pattern.FindStringSubmatch(info)
-	if len(cres) != 2 {
-		b.set(false, 0, latency)
+	connval := pattern.FindStringSubmatch(info)
+	if len(connval) != 2 {
+		b.updateStatus(false)
 		return
 	}
+	numconns, _ := strconv.ParseInt(connval[1], 10, 64)
+	atomic.StoreInt64(&b.connections, numconns)
 
-	cnum, _ := strconv.ParseInt(cres[1], 10, 64)
-	b.set(true, cnum, latency)
+	b.updateStatus(true)
 }
 
-func (b *Backend) set(up bool, conns int64, latency time.Duration) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
-
-	b.up = up
-	b.connections = conns
-	b.latency = latency
+func (b *redisBackend) incConnections(n int64) {
+	atomic.AddInt64(&b.connections, n)
 }
 
-func (b *Backend) inc() {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+func (b *redisBackend) updateStatus(success bool) {
+	if success {
+		atomic.StoreInt32(&b.failures, 0)
+		rise := b.opt.getRise()
 
-	b.connections++
+		if n := int(atomic.AddInt32(&b.successes, 1)); n > rise {
+			atomic.AddInt32(&b.successes, -1)
+		} else if n == rise {
+			atomic.CompareAndSwapInt32(&b.up, 0, 1)
+		}
+	} else {
+		atomic.StoreInt32(&b.successes, 0)
+		fall := b.opt.getFall()
+
+		if n := int(atomic.AddInt32(&b.failures, 1)); n > fall {
+			atomic.AddInt32(&b.failures, -1)
+		} else if n == fall {
+			atomic.CompareAndSwapInt32(&b.up, 1, 0)
+		}
+	}
 }
 
-func (b *Backend) start() {
-	b.poll()
+func (b *redisBackend) startLoop() {
+	interval := b.opt.getCheckInterval()
+	b.ping()
 
 	b.closer.Go(func() error {
 		for {
 			select {
 			case <-b.closer.Dying():
-				return nil
-			case <-time.After(b.CheckInterval):
-				// continue
+				return b.client.Close()
+			case <-time.After(interval):
+				b.ping()
 			}
-			b.poll()
 		}
 		return nil
 	})
-}
-
-func (b *Backend) close() error {
-	b.closer.Kill(nil)
-	return b.closer.Wait()
 }

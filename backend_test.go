@@ -5,41 +5,44 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"gopkg.in/redis.v2"
 )
 
-var _ = Describe("Backend", func() {
-	var subject *Backend
-	var original = &Backend{Addr: "localhost:6379", CheckInterval: 2 * time.Second}
+var _ = Describe("redisBackend", func() {
+	var subject *redisBackend
 
 	BeforeEach(func() {
-		subject = original.normalize()
+		subject = newRedisBackend(&Options{Options: redis.Options{
+			Addr:    "localhost:6379",
+			Network: "tcp",
+		}, Rise: 2})
 	})
 
-	It("should normalize", func() {
-		Expect(subject).To(Equal(&Backend{
-			Addr:          "localhost:6379",
-			Network:       "tcp",
-			CheckInterval: 2 * time.Second,
-		}))
-		Expect(new(Backend).normalize()).To(Equal(&Backend{
-			Addr:          "127.0.0.1:6379",
-			Network:       "tcp",
-			CheckInterval: time.Second,
-		}))
+	AfterEach(func() {
+		Expect(subject.Close()).NotTo(HaveOccurred())
 	})
 
-	It("should not mutate original", func() {
-		subject.CheckInterval = 3 * time.Second
-		Expect(original.CheckInterval).To(Equal(2 * time.Second))
-	})
-
-	It("should start, check and stop", func() {
-		subject.start()
-		defer subject.close()
-
+	It("should ping periodically", func() {
 		Expect(subject.Up()).To(BeTrue())
+		Expect(subject.Down()).To(BeFalse())
 		Expect(subject.Connections()).To(BeNumerically(">", 0))
+		Expect(subject.Connections()).To(BeNumerically("<", 20000))
 		Expect(subject.Latency()).To(BeNumerically(">", 0))
+		Expect(subject.Latency()).To(BeNumerically("<", time.Second))
+	})
+
+	It("should update status based on rise/fall", func() {
+		Expect(subject.Up()).To(BeTrue())
+		subject.updateStatus(false)
+		Expect(subject.Up()).To(BeFalse())
+		for i := 0; i < 100; i++ {
+			subject.updateStatus(false)
+		}
+		Expect(subject.Up()).To(BeFalse())
+		subject.updateStatus(true)
+		Expect(subject.Up()).To(BeFalse())
+		subject.updateStatus(true)
+		Expect(subject.Up()).To(BeTrue())
 	})
 
 })

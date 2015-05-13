@@ -9,17 +9,18 @@ import (
 )
 
 func main() {
-	client := balancer.NewClient(
-		[]balancer.Backend{
-			balancer.Backend{Addr: "host-1:6379", CheckInterval: 600 * time.Millisecond},
-			balancer.Backend{Addr: "/tmp/redis.sock", Network: "unix"},
-			balancer.Backend{Addr: "host-2:6379", CheckInterval: 800 * time.Millisecond},
-			balancer.Backend{Addr: "host-2:6380"},
+	clients := balancer.New(
+		[]balancer.Options{
+			{Options: redis.Options{Network: "tcp", Addr: "host-1:6379"}, CheckInterval: 600 * time.Millisecond},
+			{Options: redis.Options{Network: "unix", Addr: "/tmp/redis.sock"}},
+			{Options: redis.Options{Network: "tcp", Addr: "host-2:6379"}, CheckInterval: 800 * time.Millisecond},
+			{Options: redis.Options{Network: "tcp", Addr: "host-2:6380"}},
 		},
 		balancer.ModeLeastConn,
-		&redis.Options{DialTimeout: time.Second},
 	)
+	defer clients.Close()
 
+	client := clients.Next()
 	res, err := client.Ping().Result()
 	if err != nil {
 		log.Fatal(err)
