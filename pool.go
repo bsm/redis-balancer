@@ -43,6 +43,18 @@ func (p pool) Random() *redisBackend {
 	return nil
 }
 
+// At picks a pool item using at pos (seed)
+func (p pool) At(pos int) *redisBackend {
+	n := len(p)
+	if n < 1 {
+		return nil
+	}
+	if pos %= n; pos < 0 {
+		pos *= -1
+	}
+	return p[pos]
+}
+
 // WeightedRandom returns a weighted-random backend
 func (p pool) WeightedRandom(weight func(*redisBackend) int64) *redisBackend {
 	if len(p) < 1 {

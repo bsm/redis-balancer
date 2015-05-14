@@ -83,6 +83,17 @@ var _ = Describe("Balancer", func() {
 			Expect(subject.selector[3].connections).To(Equal(int64(17)))
 		})
 
+		It("should pick next backend (round-robin)", func() {
+			subject.mode = ModeRoundRobin
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-3:6379"))
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-4:6379"))
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-2:6379"))
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-3:6379"))
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-4:6379"))
+			Expect(subject.pickNext().opt.Addr).To(Equal("host-2:6379"))
+			Expect(subject.selector[3].connections).To(Equal(int64(16)))
+		})
+
 		It("should fallback on random when everything down", func() {
 			subject.selector[1].up = 0
 			subject.selector[2].up = 0

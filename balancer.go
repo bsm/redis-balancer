@@ -1,6 +1,7 @@
 package balancer
 
 import (
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/redis.v2"
@@ -19,6 +20,8 @@ const (
 	ModeRandom
 	// ModeWeightedLatency uses latency as a weight for random selection.
 	ModeWeightedLatency
+	// ModeRoundRobin round-robins across available backends.
+	ModeRoundRobin
 )
 
 const minCheckInterval = 100 * time.Millisecond
@@ -27,6 +30,7 @@ const minCheckInterval = 100 * time.Millisecond
 type Balancer struct {
 	selector pool
 	mode     BalanceMode
+	cursor   int32
 }
 
 // New initializes a new redis balancer
@@ -80,6 +84,9 @@ func (b *Balancer) pickNext() (backend *redisBackend) {
 			factor := int64(b.Latency())
 			return factor * factor
 		})
+	case ModeRoundRobin:
+		next := int(atomic.AddInt32(&b.cursor, 1))
+		backend = b.selector.Up().At(next)
 	}
 
 	// Fall back on random backend

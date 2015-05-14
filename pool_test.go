@@ -66,4 +66,15 @@ var _ = Describe("pool", func() {
 		Expect(res).To(Equal(map[string]int{"host-1:6379": 418, "host-2:6379": 204, "host-3:6379": 302, "host-4:6379": 76}))
 	})
 
+	It("should select at position", func() {
+		Expect(pool{}.At(0)).To(BeNil())
+		Expect(subject.At(0).opt.Addr).To(Equal("host-1:6379"))
+		Expect(subject.At(1).opt.Addr).To(Equal("host-2:6379"))
+		Expect(subject.At(2).opt.Addr).To(Equal("host-3:6379"))
+		Expect(subject.At(3).opt.Addr).To(Equal("host-4:6379"))
+		Expect(subject.At(4).opt.Addr).To(Equal("host-1:6379"))
+		Expect(subject.At(-1).opt.Addr).To(Equal("host-2:6379"))
+		Expect(subject.At(-99).opt.Addr).To(Equal("host-4:6379"))
+	})
+
 })
