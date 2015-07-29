@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"gopkg.in/redis.v2"
+	"gopkg.in/redis.v3"
 	"gopkg.in/tomb.v2"
 )
 
